@@ -55,66 +55,59 @@ function parsePriceValue(text) {
 async function extractProduct(page, url) {
   const name = await page.evaluate(() => {
     const og = document.querySelector('meta[property="og:title"]');
-    if (og && og.content) return og.content.trim();
+    if (og && og.content) return { value: og.content.trim(), source: 'og:title' };
     const h1 = document.querySelector('h1');
-    if (h1 && h1.textContent.trim()) return h1.textContent.trim();
-    return document.title ? document.title.trim() : null;
+    if (h1 && h1.textContent.trim()) return { value: h1.textContent.trim(), source: 'h1' };
+    if (document.title) return { value: document.title.trim(), source: 'document.title' };
+    return { value: null, source: 'none' };
   });
+  console.log(`[extract] name found via ${name.source}: ${name.value}`);
 
   const priceText = await page.evaluate(() => {
-    const isVisible = (el) => {
-      const style = window.getComputedStyle(el);
-      return style.display !== 'none' && style.visibility !== 'hidden' && style.textDecoration.indexOf('line-through') === -1;
-    };
-
-    const candidates = Array.from(
-      document.querySelectorAll('[class*="price" i], [class*="Price" i], [id*="price" i], [data-price], [itemprop="price"]')
-    ).filter((el) => isVisible(el) && el.textContent && el.textContent.trim().length > 0 && el.textContent.trim().length < 40);
-
+    const candidates = Array.from(document.querySelectorAll('[class*="price" i]')).filter(
+      (el) => el.textContent && el.textContent.includes('$')
+    );
     if (candidates.length === 0) return null;
-
-    const saleKeywords = ['sale', 'special', 'discount', 'now', 'current'];
-    const original = ['was', 'original', 'rrp', 'compare'];
-
-    const scored = candidates.map((el) => {
-      const cls = (el.className || '').toString().toLowerCase();
-      let score = 0;
-      if (saleKeywords.some((k) => cls.includes(k))) score += 2;
-      if (original.some((k) => cls.includes(k))) score -= 2;
-      if (el.tagName === 'DEL' || el.tagName === 'S' || el.tagName === 'STRIKE') score -= 3;
-      return { el, score, text: el.textContent.trim() };
-    });
-
-    scored.sort((a, b) => b.score - a.score);
-    return scored[0] ? scored[0].text : null;
+    return candidates[0].textContent.trim();
   });
+  console.log(`[extract] price found: ${priceText}`);
 
   const image = await page.evaluate(() => {
     const og = document.querySelector('meta[property="og:image"]');
-    if (og && og.content) return og.content;
+    if (og && og.content) return { value: og.content, source: 'og:image' };
 
     const imgs = Array.from(document.querySelectorAll('img'));
-    let best = null;
-    let bestArea = 0;
-    for (const img of imgs) {
-      const area = (img.naturalWidth || img.width || 0) * (img.naturalHeight || img.height || 0);
-      if (area > bestArea && img.src) {
-        bestArea = area;
-        best = img.src;
+
+    const productImgs = imgs.filter((img) => img.src && img.src.includes('product'));
+    if (productImgs.length > 0) {
+      let best = productImgs[0];
+      let bestArea = 0;
+      for (const img of productImgs) {
+        const area = (img.naturalWidth || img.width || 0) * (img.naturalHeight || img.height || 0);
+        if (area > bestArea) {
+          bestArea = area;
+          best = img;
+        }
       }
+      return { value: best.src, source: 'largest img with "product" in src' };
     }
-    return best;
+
+    const wideImg = imgs.find((img) => (img.naturalWidth || img.width || 0) > 300 && img.src);
+    if (wideImg) return { value: wideImg.src, source: 'first img with width > 300' };
+
+    return { value: null, source: 'none' };
   });
+  console.log(`[extract] image found via ${image.source}: ${image.value}`);
 
   const domain = new URL(url).hostname;
   const retailer = retailerNameFromDomain(domain);
   const priceValue = parsePriceValue(priceText);
 
   return {
-    name: name || null,
+    name: name.value || null,
     price: priceText || null,
     priceValue,
-    image: image || null,
+    image: image.value || null,
     retailer,
     url,
   };
@@ -133,7 +126,8 @@ app.post('/scrape', async (req, res) => {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('networkidle', { timeout: 30000 });
+    console.log(`[scrape] ${url} -> page load state: networkidle`);
 
     const product = await extractProduct(page, url);
 
