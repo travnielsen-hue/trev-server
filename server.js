@@ -1,5 +1,6 @@
 const express = require('express');
 const { chromium } = require('playwright');
+const { Readable } = require('stream');
 
 const app = express();
 const PORT = 3000;
@@ -179,6 +180,42 @@ app.post('/debug', async (req, res) => {
     if (browser) {
       await browser.close();
     }
+  }
+});
+
+app.get('/image-proxy', async (req, res) => {
+  const { url } = req.query || {};
+
+  if (!url) {
+    console.log(`[image-proxy] no url provided -> failure`);
+    return res.status(400).json({ success: false, error: 'Missing "url" query parameter' });
+  }
+
+  try {
+    const upstream = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        Accept: 'image/*,*/*;q=0.8',
+        Referer: new URL(url).origin,
+      },
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      console.log(`[image-proxy] ${url} -> upstream error: ${upstream.status}`);
+      return res.status(upstream.status || 502).json({ success: false, error: `Upstream returned ${upstream.status}` });
+    }
+
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.header('Content-Length', contentLength);
+
+    console.log(`[image-proxy] ${url} -> success: streaming ${upstream.headers.get('content-type') || 'unknown type'}`);
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    console.log(`[image-proxy] ${url} -> error: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
