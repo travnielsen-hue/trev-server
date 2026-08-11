@@ -126,8 +126,9 @@ app.post('/scrape', async (req, res) => {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForLoadState('networkidle', { timeout: 30000 });
-    console.log(`[scrape] ${url} -> page load state: networkidle`);
+    await page.waitForLoadState('load', { timeout: 30000 });
+    await page.waitForTimeout(3000);
+    console.log(`[scrape] ${url} -> page load state: load (+3000ms)`);
 
     const product = await extractProduct(page, url);
 
