@@ -144,6 +144,44 @@ app.post('/scrape', async (req, res) => {
   }
 });
 
+app.post('/debug', async (req, res) => {
+  const { url } = req.body || {};
+
+  if (!url) {
+    console.log(`[debug] no url provided -> failure`);
+    return res.status(400).json({ success: false, error: 'Missing "url" in request body' });
+  }
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3000);
+
+    const title = await page.title();
+    const metaTags = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('meta')).map((m) => ({
+        name: m.getAttribute('name'),
+        property: m.getAttribute('property'),
+        content: m.getAttribute('content'),
+      }))
+    );
+    const html = await page.content();
+    const htmlSnippet = html.slice(0, 2000);
+
+    console.log(`[debug] ${url} -> success: title="${title}"`);
+    res.json({ success: true, title, metaTags, html: htmlSnippet });
+  } catch (err) {
+    console.log(`[debug] ${url} -> error: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`trev. scrape server listening on port ${PORT}`);
 });
